@@ -1,60 +1,156 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import axios from 'axios';
 import './App.css';
 
 const API = process.env.REACT_APP_API_URL || '';
 
-function App() {
-  const [jobs, setJobs]       = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+export default function App() {
+  const [jobs, setJobs]         = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
 
+  // Filters
+  const [searchTerm, setSearchTerm]       = useState('');
+  const [companyFilter, setCompanyFilter] = useState('All');
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [remoteOnly, setRemoteOnly]         = useState(false);
+
+  // Dynamic dropdown options
+  const uniqueCompanies = useMemo(
+    () => ['All', ...new Set(jobs.map((j) => j.company))],
+    [jobs]
+  );
+  const uniqueCategories = useMemo(
+    () => ['All', ...new Set(jobs.map((j) => j.category))],
+    [jobs]
+  );
+
+  // Fetch once on button click
   const fetchJobs = async () => {
     setLoading(true);
     setError(null);
     try {
       const { data } = await axios.get(`${API}/api/jobs`);
       setJobs(data);
-    } catch (err) {
-      setError(err.response?.statusText || err.message);
+    } catch (e) {
+      setError(e.response?.statusText || e.message);
     } finally {
       setLoading(false);
     }
   };
 
+  // All filters applied
+  const filteredJobs = useMemo(
+    () =>
+      jobs.filter((job) => {
+        if (
+          searchTerm &&
+          !(
+            job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            job.company.toLowerCase().includes(searchTerm.toLowerCase())
+          )
+        )
+          return false;
+        if (companyFilter !== 'All' && job.company !== companyFilter) return false;
+        if (categoryFilter !== 'All' && job.category !== categoryFilter) return false;
+        if (
+          locationFilter &&
+          !job.location.toLowerCase().includes(locationFilter.toLowerCase())
+        )
+          return false;
+        if (remoteOnly && !job.location.toLowerCase().includes('remote'))
+          return false;
+        return true;
+      }),
+    [jobs, searchTerm, companyFilter, categoryFilter, locationFilter, remoteOnly]
+  );
+
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-      <h1>Canada Job Listings</h1>
-      <button onClick={fetchJobs} disabled={loading} style={{ margin: '1rem 0', padding: '0.5rem 1rem' }}>
-        {loading ? 'Loading…' : 'Load Jobs'}
-      </button>
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-      {jobs.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              {['Company','Title','Location','Apply'].map(c => (
-                <th key={c} style={{ border:'1px solid #ccc', padding:'0.5rem', background:'#f5f5f5' }}>{c}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job,i) => (
-              <tr key={i} style={{ background: i%2?'#fafafa':'white' }}>
-                <td style={{ border:'1px solid #ccc', padding:'0.5rem' }}>{job.company}</td>
-                <td style={{ border:'1px solid #ccc', padding:'0.5rem' }}>{job.title}</td>
-                <td style={{ border:'1px solid #ccc', padding:'0.5rem' }}>{job.location}</td>
-                <td style={{ border:'1px solid #ccc', padding:'0.5rem' }}>
-                  <a href={job.apply_url} target="_blank" rel="noopener noreferrer">Apply</a>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {jobs.length===0 && !loading && <p>No jobs loaded yet.</p>}
+    <div className="App">
+      <header className="header">
+        <h1>Canada Job Listings</h1>
+        <button
+          className="load-button"
+          onClick={fetchJobs}
+          disabled={loading}
+        >
+          {loading ? 'Loading…' : 'Load Jobs'}
+        </button>
+      </header>
+
+      {error && <div className="error">Error: {error}</div>}
+
+      <div className="filters">
+        <input
+          type="text"
+          placeholder="Search roles..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+
+        <select
+          value={companyFilter}
+          onChange={(e) => setCompanyFilter(e.target.value)}
+        >
+          {uniqueCompanies.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+        >
+          {uniqueCategories.map((cat) => (
+            <option key={cat} value={cat}>
+              {cat}
+            </option>
+          ))}
+        </select>
+
+        <input
+          type="text"
+          placeholder="Location..."
+          value={locationFilter}
+          onChange={(e) => setLocationFilter(e.target.value)}
+        />
+
+        <label>
+          <input
+            type="checkbox"
+            checked={remoteOnly}
+            onChange={(e) => setRemoteOnly(e.target.checked)}
+          />{' '}
+          Remote Only
+        </label>
+      </div>
+
+      <div className="jobs-grid">
+        {filteredJobs.length > 0 ? (
+          filteredJobs.map((job, i) => (
+            <div key={i} className="job-card">
+              <div className="job-title">{job.title}</div>
+              <div className="job-company-location">
+                {job.company} • {job.location}
+              </div>
+              <div className="job-category">{job.category}</div>
+              <a
+                href={job.apply_url}
+                className="apply-button"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Apply
+              </a>
+            </div>
+          ))
+        ) : (
+          <p className="no-jobs">No jobs match your filters.</p>
+        )}
+      </div>
     </div>
   );
 }
-
-export default App;

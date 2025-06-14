@@ -1,28 +1,21 @@
-// server/index.js
-const express   = require('express');
-const axios     = require('axios');
-const cheerio   = require('cheerio');
-const cors      = require('cors');
-const { URL }   = require('url');
+const express = require('express');
+const axios   = require('axios');
+const cheerio = require('cheerio');
+const cors    = require('cors');
+const { URL } = require('url');
 
-const app   = express();
-const PORT  = process.env.PORT || 5001;
-const TIMEOUT = 10000;  // ms
+const app     = express();
+const PORT    = process.env.PORT || 5001;
+const TIMEOUT = 10000; // ms
 
 app.use(cors());
-app.use(express.json());
 
-// ---------------------------------------------------------------------
-// 1) Full list of companies, tagged with lever_slug, gh_slug or URL:
-// ---------------------------------------------------------------------
+// ─── Your 28 companies ─────────────────────────────────────────────────────────
 const COMPANIES = [
-  // Lever‑powered
-  { name: "Notion",   lever_slug: "notion" },
-  { name: "Figma",    lever_slug: "figma" },
-  // Greenhouse‑powered
-  { name: "Pinterest", gh_slug: "pinterest" },
-  { name: "Airtable",  gh_slug: "airtable" },
-  // HTML fallback
+  { name: "Notion",    lever_slug: "notion" },
+  { name: "Figma",     lever_slug: "figma" },
+  { name: "Pinterest", gh_slug:    "pinterest" },
+  { name: "Airtable",  gh_slug:    "airtable" },
   { name: "Apple",     url: "https://jobs.apple.com/en-us/search?location=Canada" },
   { name: "Meta",      url: "https://www.metacareers.com/jobs?location=Canada" },
   { name: "Google",    url: "https://careers.google.com/jobs/results/?location=Canada" },
@@ -49,79 +42,76 @@ const COMPANIES = [
   { name: "Brex",      url: "https://brex.com/careers" },
 ];
 
-// ---------------------------------------------------------------------
-// 2) Lever JSON API
-// ---------------------------------------------------------------------
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 async function getLeverJobs(name, slug) {
-  const url = `https://api.lever.co/v0/postings/${slug}?limit=200`;
   try {
-    const { data } = await axios.get(url, { timeout: TIMEOUT });
+    const { data } = await axios.get(
+      `https://api.lever.co/v0/postings/${slug}?limit=200`,
+      { timeout: TIMEOUT }
+    );
     return data
-      .filter(post => post.categories?.location?.toLowerCase().includes("canada"))
-      .map(post => ({
+      .filter(p => p.categories?.location?.toLowerCase().includes("canada"))
+      .map(p => ({
         company:   name,
-        title:     post.text.trim(),
-        location:  post.categories.location.trim(),
-        apply_url: post.applyUrl
+        title:     p.text.trim(),
+        location:  p.categories.location.trim(),
+        category:  p.categories.team || "Other",
+        apply_url: p.applyUrl
       }));
   } catch (e) {
-    console.warn(`⚠️ [${name}] Lever API failed: ${e.message}`);
+    console.warn(`⚠️ [${name}] Lever API error: ${e.message}`);
     return [];
   }
 }
 
-// ---------------------------------------------------------------------
-// 3) Greenhouse JSON API
-// ---------------------------------------------------------------------
 async function getGreenhouseJobs(name, slug) {
-  const url = `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`;
   try {
-    const { data } = await axios.get(url, { timeout: TIMEOUT });
+    const { data } = await axios.get(
+      `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`,
+      { timeout: TIMEOUT }
+    );
     return data.jobs
-      .filter(job => job.location.name.toLowerCase().includes("canada"))
-      .map(job => ({
+      .filter(j => j.location.name.toLowerCase().includes("canada"))
+      .map(j => ({
         company:   name,
-        title:     job.title.trim(),
-        location:  job.location.name.trim(),
-        apply_url: job.absolute_url
+        title:     j.title.trim(),
+        location:  j.location.name.trim(),
+        category:  j.departments?.[0]?.name || "Other",
+        apply_url: j.absolute_url
       }));
   } catch (e) {
-    console.warn(`⚠️ [${name}] Greenhouse API failed: ${e.message}`);
+    console.warn(`⚠️ [${name}] Greenhouse API error: ${e.message}`);
     return [];
   }
 }
 
-// ---------------------------------------------------------------------
-// 4) Generic HTML scrape fallback
-// ---------------------------------------------------------------------
 function parseGeneric(html, baseUrl, name) {
   const $ = cheerio.load(html);
-  const jobs = [];
+  const seen = new Set();
+  const out  = [];
 
   $("a[href]").each((i, el) => {
     const snippet = $(el).text().trim();
     const context = $(el).closest("li,div,tr").text();
-    if (!snippet) return;
-    if ((snippet + context).toLowerCase().includes("canada")) {
-      const href = $(el).attr("href");
-      const link = new URL(href, baseUrl).href;
-      const parts = snippet.split("–");          // Title – Location
-      jobs.push({
-        company:   name,
-        title:     parts[0].trim(),
-        location:  (parts[1]||"").trim(),
-        apply_url: link
-      });
-    }
+    if (!snippet || !(snippet + context).toLowerCase().includes("canada")) return;
+
+    const href = $(el).attr("href");
+    const link = new URL(href, baseUrl).href;
+    if (seen.has(link)) return;
+    seen.add(link);
+
+    const parts = snippet.split("–");
+    out.push({
+      company:   name,
+      title:     parts[0].trim(),
+      location:  (parts[1]||"").trim(),
+      category:  "Other",
+      apply_url: link
+    });
   });
 
-  // dedupe by URL
-  const seen = {};
-  return jobs.filter(j => {
-    if (seen[j.apply_url]) return false;
-    seen[j.apply_url] = true;
-    return true;
-  });
+  return out;
 }
 
 async function getHtmlJobs(name, url) {
@@ -129,34 +119,26 @@ async function getHtmlJobs(name, url) {
     const { data } = await axios.get(url, { timeout: TIMEOUT });
     return parseGeneric(data, url, name);
   } catch (e) {
-    console.warn(`⚠️ [${name}] HTML fetch failed: ${e.message}`);
+    console.warn(`⚠️ [${name}] HTML fetch error: ${e.message}`);
     return [];
   }
 }
 
-// ---------------------------------------------------------------------
-// 5) Aggregate endpoint
-// ---------------------------------------------------------------------
+// ─── Aggregate & Serve ──────────────────────────────────────────────────────
+
 app.get("/api/jobs", async (req, res) => {
   let all = [];
   for (let comp of COMPANIES) {
     let list = [];
-    if (comp.lever_slug) {
-      list = await getLeverJobs(comp.name, comp.lever_slug);
-    } else if (comp.gh_slug) {
-      list = await getGreenhouseJobs(comp.name, comp.gh_slug);
-    } else {
-      list = await getHtmlJobs(comp.name, comp.url);
-    }
-    console.log(`→ [${comp.name}] found ${list.length} roles`);
+    if (comp.lever_slug)   list = await getLeverJobs(comp.name, comp.lever_slug);
+    else if (comp.gh_slug) list = await getGreenhouseJobs(comp.name, comp.gh_slug);
+    else                   list = await getHtmlJobs(comp.name, comp.url);
+    console.log(`→ [${comp.name}] found ${list.length}`);
     all = all.concat(list);
   }
   res.json(all);
 });
 
-// ---------------------------------------------------------------------
-// 6) Start server
-// ---------------------------------------------------------------------
 app.listen(PORT, () =>
   console.log(`API listening on http://localhost:${PORT}/api/jobs`)
 );

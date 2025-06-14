@@ -5,9 +5,9 @@ import './App.css';
 const API = process.env.REACT_APP_API_URL || '';
 
 export default function App() {
-  const [jobs, setJobs]         = useState([]);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState(null);
+  const [jobs, setJobs]           = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState(null);
 
   // Filters
   const [searchTerm, setSearchTerm]       = useState('');
@@ -16,17 +16,17 @@ export default function App() {
   const [locationFilter, setLocationFilter] = useState('');
   const [remoteOnly, setRemoteOnly]         = useState(false);
 
-  // Dynamic dropdown options
+  // Dropdown options
   const uniqueCompanies = useMemo(
-    () => ['All', ...new Set(jobs.map((j) => j.company))],
+    () => ['All', ...new Set(jobs.map(j => j.company))],
     [jobs]
   );
   const uniqueCategories = useMemo(
-    () => ['All', ...new Set(jobs.map((j) => j.category))],
+    () => ['All', ...new Set(jobs.map(j => j.category))],
     [jobs]
   );
 
-  // Fetch once on button click
+  // Fetch all Canada + USA jobs
   const fetchJobs = async () => {
     setLoading(true);
     setError(null);
@@ -40,41 +40,29 @@ export default function App() {
     }
   };
 
-  // All filters applied
-  const filteredJobs = useMemo(
-    () =>
-      jobs.filter((job) => {
-        if (
-          searchTerm &&
-          !(
-            job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            job.company.toLowerCase().includes(searchTerm.toLowerCase())
-          )
-        )
-          return false;
-        if (companyFilter !== 'All' && job.company !== companyFilter) return false;
-        if (categoryFilter !== 'All' && job.category !== categoryFilter) return false;
-        if (
-          locationFilter &&
-          !job.location.toLowerCase().includes(locationFilter.toLowerCase())
-        )
-          return false;
-        if (remoteOnly && !job.location.toLowerCase().includes('remote'))
-          return false;
-        return true;
-      }),
+  // Apply filters in-memory
+  const filtered = useMemo(
+    () => jobs.filter(job => {
+      const st = searchTerm.toLowerCase();
+      if (st && !(
+        job.title.toLowerCase().includes(st) ||
+        job.company.toLowerCase().includes(st)
+      )) return false;
+      if (companyFilter !== 'All' && job.company !== companyFilter) return false;
+      if (categoryFilter !== 'All' && job.category !== categoryFilter) return false;
+      if (locationFilter && !job.location.toLowerCase().includes(locationFilter.toLowerCase()))
+        return false;
+      if (remoteOnly && !job.location.toLowerCase().includes('remote')) return false;
+      return true;
+    }),
     [jobs, searchTerm, companyFilter, categoryFilter, locationFilter, remoteOnly]
   );
 
   return (
     <div className="App">
       <header className="header">
-        <h1>Canada Job Listings</h1>
-        <button
-          className="load-button"
-          onClick={fetchJobs}
-          disabled={loading}
-        >
+        <h1>Job Listings (Canada & USA)</h1>
+        <button className="load-button" onClick={fetchJobs} disabled={loading}>
           {loading ? 'Loading…' : 'Load Jobs'}
         </button>
       </header>
@@ -86,51 +74,37 @@ export default function App() {
           type="text"
           placeholder="Search roles..."
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={e => setSearchTerm(e.target.value)}
         />
 
-        <select
-          value={companyFilter}
-          onChange={(e) => setCompanyFilter(e.target.value)}
-        >
-          {uniqueCompanies.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
+        <select value={companyFilter} onChange={e => setCompanyFilter(e.target.value)}>
+          {uniqueCompanies.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
 
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-        >
-          {uniqueCategories.map((cat) => (
-            <option key={cat} value={cat}>
-              {cat}
-            </option>
-          ))}
+        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
+          {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
 
         <input
           type="text"
           placeholder="Location..."
           value={locationFilter}
-          onChange={(e) => setLocationFilter(e.target.value)}
+          onChange={e => setLocationFilter(e.target.value)}
         />
 
         <label>
           <input
             type="checkbox"
             checked={remoteOnly}
-            onChange={(e) => setRemoteOnly(e.target.checked)}
+            onChange={e => setRemoteOnly(e.target.checked)}
           />{' '}
           Remote Only
         </label>
       </div>
 
       <div className="jobs-grid">
-        {filteredJobs.length > 0 ? (
-          filteredJobs.map((job, i) => (
+        {filtered.length > 0 ? (
+          filtered.map((job, i) => (
             <div key={i} className="job-card">
               <div className="job-title">{job.title}</div>
               <div className="job-company-location">

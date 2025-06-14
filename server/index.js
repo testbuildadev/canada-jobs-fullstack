@@ -10,7 +10,7 @@ const TIMEOUT = 10000; // ms
 
 app.use(cors());
 
-// ─── Your 28 companies ─────────────────────────────────────────────────────────
+// ─── List of companies ───────────────────────────────────────────────────────
 const COMPANIES = [
   { name: "Notion",    lever_slug: "notion" },
   { name: "Figma",     lever_slug: "figma" },
@@ -42,8 +42,7 @@ const COMPANIES = [
   { name: "Brex",      url: "https://brex.com/careers" },
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
+// ─── Lever API ───────────────────────────────────────────────────────────────
 async function getLeverJobs(name, slug) {
   try {
     const { data } = await axios.get(
@@ -51,7 +50,10 @@ async function getLeverJobs(name, slug) {
       { timeout: TIMEOUT }
     );
     return data
-      .filter(p => p.categories?.location?.toLowerCase().includes("canada"))
+      .filter(p => {
+        const loc = (p.categories?.location || "").toLowerCase();
+        return loc.includes("canada") || loc.includes("usa");
+      })
       .map(p => ({
         company:   name,
         title:     p.text.trim(),
@@ -65,6 +67,7 @@ async function getLeverJobs(name, slug) {
   }
 }
 
+// ─── Greenhouse API ─────────────────────────────────────────────────────────
 async function getGreenhouseJobs(name, slug) {
   try {
     const { data } = await axios.get(
@@ -72,7 +75,10 @@ async function getGreenhouseJobs(name, slug) {
       { timeout: TIMEOUT }
     );
     return data.jobs
-      .filter(j => j.location.name.toLowerCase().includes("canada"))
+      .filter(j => {
+        const loc = (j.location.name || "").toLowerCase();
+        return loc.includes("canada") || loc.includes("usa");
+      })
       .map(j => ({
         company:   name,
         title:     j.title.trim(),
@@ -86,6 +92,7 @@ async function getGreenhouseJobs(name, slug) {
   }
 }
 
+// ─── HTML fallback ──────────────────────────────────────────────────────────
 function parseGeneric(html, baseUrl, name) {
   const $ = cheerio.load(html);
   const seen = new Set();
@@ -94,7 +101,8 @@ function parseGeneric(html, baseUrl, name) {
   $("a[href]").each((i, el) => {
     const snippet = $(el).text().trim();
     const context = $(el).closest("li,div,tr").text();
-    if (!snippet || !(snippet + context).toLowerCase().includes("canada")) return;
+    const txt     = (snippet + context).toLowerCase();
+    if (!snippet || !(txt.includes("canada") || txt.includes("usa"))) return;
 
     const href = $(el).attr("href");
     const link = new URL(href, baseUrl).href;
@@ -124,9 +132,8 @@ async function getHtmlJobs(name, url) {
   }
 }
 
-// ─── Aggregate & Serve ──────────────────────────────────────────────────────
-
-app.get("/api/jobs", async (req, res) => {
+// ─── Aggregate endpoint ─────────────────────────────────────────────────────
+app.get("/api/jobs", async (_, res) => {
   let all = [];
   for (let comp of COMPANIES) {
     let list = [];

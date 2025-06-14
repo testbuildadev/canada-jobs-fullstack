@@ -1,30 +1,34 @@
-const express     = require('express');
-const axios       = require('axios');
-const cheerio     = require('cheerio');
-const cors        = require('cors');
-const helmet      = require('helmet');
-const compression = require('compression');
-const rateLimit   = require('express-rate-limit');
-const { URL }     = require('url');
+const express       = require('express');
+const axios         = require('axios');
+const cheerio       = require('cheerio');
+const cors          = require('cors');
+const helmet        = require('helmet');
+const compression   = require('compression');
+const rateLimit     = require('express-rate-limit');
+const { URL }       = require('url');
 
-const app     = express();
-const PORT    = process.env.PORT || 5001;
-const TIMEOUT = 10000; // ms
+const app              = express();
+const PORT             = process.env.PORT || 5001;
+const TIMEOUT          = 10000;            // ms per HTTP request
+const REFRESH_INTERVAL = 60 * 60 * 1000;   // 1 hour
 
-// ── Middleware ─────────────────────────────────────────────────────────
-app.use(helmet());                        // Security headers
-app.use(compression());                   // Gzip compression
-app.use(express.json());                  // JSON body parsing
-app.use(rateLimit({ windowMs: 15*60*1000, max: 100 })); // Rate limiting
+let jobCache = [];
+let cacheTimestamp = null;
+
+// ── Middleware ─────────────────────────────────────────────────────
+app.use(helmet());
+app.use(compression());
+app.use(express.json());
+app.use(rateLimit({ windowMs: 15*60*1000, max: 100 }));
 app.use(cors({
   origin: [
-    'https://tubular-kringle-5a9b7a.netlify.app', // your Netlify URL
-    'https://canada-jobs-ui.netlify.app',          // optional custom UI domain
-    'http://localhost:3000'                        // local development
+    'https://tubular-kringle-5a9b7a.netlify.app',
+    'https://canada-jobs-ui.netlify.app',
+    'http://localhost:3000'
   ]
 }));
 
-// ── Company Configuration ────────────────────────────────────────────────
+// ── Companies ───────────────────────────────────────────────────────
 const COMPANIES = [
   { name: "Notion",    lever_slug: "notion" },
   { name: "Figma",     lever_slug: "figma" },
@@ -53,10 +57,10 @@ const COMPANIES = [
   { name: "Twitter",   url: "https://careers.twitter.com/" },
   { name: "Rippling",  url: "https://www.rippling.com/careers" },
   { name: "Twitch",    url: "https://www.twitch.tv/jobs" },
-  { name: "Brex",      url: "https://brex.com/careers" }
+  { name: "Brex",      url: "https://brex.com/careers" },
 ];
 
-// ── Helper functions ─────────────────────────────────────────────────────
+// ── Scraper Helpers ─────────────────────────────────────────────────
 async function getLeverJobs(name, slug) {
   try {
     const { data } = await axios.get(
@@ -76,7 +80,7 @@ async function getLeverJobs(name, slug) {
         apply_url: p.applyUrl
       }));
   } catch (e) {
-    console.warn(`⚠️ [${name}] Lever API error: ${e.message}`);
+    console.warn(`⚠️ [${name}] Lever error: ${e.message}`);
     return [];
   }
 }
@@ -100,29 +104,23 @@ async function getGreenhouseJobs(name, slug) {
         apply_url: j.absolute_url
       }));
   } catch (e) {
-    console.warn(`⚠️ [${name}] Greenhouse API error: ${e.message}`);
+    console.warn(`⚠️ [${name}] Greenhouse error: ${e.message}`);
     return [];
   }
 }
 
 function parseGeneric(html, baseUrl, name) {
-  const $ = cheerio.load(html);
-  const seen = new Set();
-  const jobs = [];
-
+  const $ = cheerio.load(html), seen = new Set(), out = [];
   $("a[href]").each((_, el) => {
     const snippet = $(el).text().trim();
     const context = $(el).closest("li,div,tr").text();
-    const txt     = (snippet + context).toLowerCase();
+    const txt = (snippet + context).toLowerCase();
     if (!snippet || !(txt.includes("canada") || txt.includes("usa"))) return;
-
-    const href = $(el).attr("href");
-    const link = new URL(href, baseUrl).href;
+    const link = new URL($(el).attr("href"), baseUrl).href;
     if (seen.has(link)) return;
     seen.add(link);
-
     const parts = snippet.split("–");
-    jobs.push({
+    out.push({
       company:   name,
       title:     parts[0].trim(),
       location:  (parts[1]||"").trim(),
@@ -130,8 +128,7 @@ function parseGeneric(html, baseUrl, name) {
       apply_url: link
     });
   });
-
-  return jobs;
+  return out;
 }
 
 async function getHtmlJobs(name, url) {
@@ -139,24 +136,33 @@ async function getHtmlJobs(name, url) {
     const { data } = await axios.get(url, { timeout: TIMEOUT });
     return parseGeneric(data, url, name);
   } catch (e) {
-    console.warn(`⚠️ [${name}] HTML fetch error: ${e.message}`);
+    console.warn(`⚠️ [${name}] HTML error: ${e.message}`);
     return [];
   }
 }
 
-// ── Aggregate & Serve ─────────────────────────────────────────────────────
-app.get('/api/jobs', async (_, res) => {
-  let all = [];
-  for (let comp of COMPANIES) {
-    let list = [];
-    if (comp.lever_slug)   list = await getLeverJobs(comp.name, comp.lever_slug);
-    else if (comp.gh_slug) list = await getGreenhouseJobs(comp.name, comp.gh_slug);
-    else                   list = await getHtmlJobs(comp.name, comp.url);
-    console.log(`→ [${comp.name}] found ${list.length}`);
-    all = all.concat(list);
-  }
-  res.json(all);
-});
+// ── Cache Refresh ─────────────────────────────────────────────────────
+async function refreshJobCache() {
+  const fetchers = COMPANIES.map(comp => {
+    if (comp.lever_slug)   return getLeverJobs(comp.name, comp.lever_slug);
+    if (comp.gh_slug)      return getGreenhouseJobs(comp.name, comp.gh_slug);
+                           return getHtmlJobs(comp.name, comp.url);
+  });
+  const results = await Promise.all(fetchers);
+  jobCache       = results.flat();
+  cacheTimestamp = new Date().toISOString();
+  console.log(`Cache refreshed: ${jobCache.length} jobs at ${cacheTimestamp}`);
+}
 
+// ── Startup & Scheduling ──────────────────────────────────────────────
 app.listen(PORT, () =>
-  console.log(`API listening on https://<YOUR-API-DOMAIN>/api/jobs`))
+  console.log(`API listening on https://<YOUR-API-DOMAIN>/api/jobs`)
+);
+refreshJobCache().catch(console.error);
+setInterval(refreshJobCache, REFRESH_INTERVAL);
+
+// ── Endpoint ──────────────────────────────────────────────────────────
+app.get('/api/jobs', (req, res) => {
+  res.set('X-Cache-Timestamp', cacheTimestamp);
+  res.json(jobCache);
+});

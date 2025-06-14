@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API = process.env.REACT_APP_API_URL || '';
+const API = process.env.REACT_APP_API_URL;
 
 export default function App() {
   const [jobs, setJobs]           = useState([]);
@@ -17,62 +17,58 @@ export default function App() {
   const [remoteOnly, setRemoteOnly]         = useState(false);
 
   // Dropdown options
-  const uniqueCompanies = useMemo(
-    () => ['All', ...new Set(jobs.map(j => j.company))],
+  const uniqueCompanies = useMemo(() =>
+    ['All', ...new Set(jobs.map(j => j.company))],
     [jobs]
   );
-  const uniqueCategories = useMemo(
-    () => ['All', ...new Set(jobs.map(j => j.category))],
+  const uniqueCategories = useMemo(() =>
+    ['All', ...new Set(jobs.map(j => j.category))],
     [jobs]
   );
 
-  // Fetch all Canada+USA jobs
-  const fetchJobs = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { data } = await axios.get(`${API}/api/jobs`);
-      setJobs(data);
-    } catch (e) {
-      setError(e.response?.statusText || e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // On mount, auto‐load
+  // Fetch on mount
   useEffect(() => {
-    fetchJobs();
+    (async () => {
+      setLoading(true);
+      try {
+        const { data } = await axios.get(`${API}/api/jobs`);
+        setJobs(data);
+      } catch (e) {
+        setError(e.response?.statusText || e.message);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  // In‐memory filtering
-  const filtered = useMemo(
-    () =>
-      jobs.filter(job => {
-        const st = searchTerm.toLowerCase();
-        if (st && !(job.title.toLowerCase().includes(st) || job.company.toLowerCase().includes(st)))
-          return false;
-        if (companyFilter !== 'All' && job.company !== companyFilter) return false;
-        if (categoryFilter !== 'All' && job.category !== categoryFilter) return false;
-        if (locationFilter && !job.location.toLowerCase().includes(locationFilter.toLowerCase()))
-          return false;
-        if (remoteOnly && !job.location.toLowerCase().includes('remote')) return false;
-        return true;
-      }),
+  // In‑memory filtering
+  const filtered = useMemo(() =>
+    jobs.filter(job => {
+      const st = searchTerm.toLowerCase();
+      if (st && !(job.title.toLowerCase().includes(st) || job.company.toLowerCase().includes(st)))
+        return false;
+      if (companyFilter !== 'All' && job.company !== companyFilter) return false;
+      if (categoryFilter !== 'All' && job.category !== categoryFilter) return false;
+      if (locationFilter && !job.location.toLowerCase().includes(locationFilter.toLowerCase()))
+        return false;
+      if (remoteOnly && !job.location.toLowerCase().includes('remote')) return false;
+      return true;
+    }),
     [jobs, searchTerm, companyFilter, categoryFilter, locationFilter, remoteOnly]
   );
+
+  if (loading && jobs.length === 0) {
+    return (
+      <div className="loader-container">
+        <div className="loader">Loading jobs…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="App">
       <header className="header">
         <h1>Job Listings (Canada & USA)</h1>
-        <button
-          className="load-button"
-          onClick={fetchJobs}
-          disabled={loading}
-        >
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
       </header>
 
       {error && <div className="error">Error: {error}</div>}
@@ -80,7 +76,7 @@ export default function App() {
       <div className="filters">
         <input
           type="text"
-          placeholder="Search..."
+          placeholder="Search roles…"
           value={searchTerm}
           onChange={e => setSearchTerm(e.target.value)}
         />
@@ -92,7 +88,7 @@ export default function App() {
         </select>
         <input
           type="text"
-          placeholder="Location..."
+          placeholder="Location…"
           value={locationFilter}
           onChange={e => setLocationFilter(e.target.value)}
         />
@@ -101,31 +97,21 @@ export default function App() {
             type="checkbox"
             checked={remoteOnly}
             onChange={e => setRemoteOnly(e.target.checked)}
-          />{' '}
-          Remote Only
+          /> Remote Only
         </label>
       </div>
 
       <div className="jobs-grid">
-        {filtered.length > 0 ? (
-          filtered.map((job, i) => (
-            <div key={i} className="job-card">
-              <div className="job-title">{job.title}</div>
-              <div className="job-company-location">
-                {job.company} • {job.location}
-              </div>
-              <div className="job-category">{job.category}</div>
-              <a
-                href={job.apply_url}
-                className="apply-button"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Apply
-              </a>
-            </div>
-          ))
-        ) : (
+        {filtered.length > 0 ? filtered.map((job,i) => (
+          <div key={i} className="job-card">
+            <div className="job-title">{job.title}</div>
+            <div className="job-company-location">{job.company} • {job.location}</div>
+            <div className="job-category">{job.category}</div>
+            <a href={job.apply_url} className="apply-button" target="_blank" rel="noopener noreferrer">
+              Apply
+            </a>
+          </div>
+        )) : (
           <p className="no-jobs">No jobs match your filters.</p>
         )}
       </div>
